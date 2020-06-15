@@ -1,6 +1,6 @@
 //
-//  client.c
-//  client
+//  server.c
+//  server
 //
 //  Created by 고상원 on 2020/06/10.
 //  Copyright © 2020 고상원. All rights reserved.
@@ -15,92 +15,75 @@
 #include <arpa/inet.h>
 
 #define BUFF_SIZE 1024
-#define MAX_CLIENT 100
+#define NAME_SIZE 15
 
-void *handle_client(void *arg);
-void send_msg(char *msg, int len);
+void *send_msg(void *arg);
+void *recv_msg(void *arg);
 
-int client_cnt = 0;
-int client_socks[MAX_CLIENT];
-pthread_mutex_t mutx;
+char name[NAME_SIZE] = "[DEFUALT]";
+char msg[BUFF_SIZE];
 
 int main(int argc, const char * argv[]) {
-    int client_sock = 0;
-    int server_sock = 0;
-    unsigned int client_addr_size;
+    int sock;
     
     struct sockaddr_in server_addr;
-    struct sockaddr_in client_addr;
-    
-    pthread_t t_id;
-    if(argc != 2){
-        printf("Usage: %s <port>\n", argv[0]);
+    pthread_t snd_thread;
+    pthread_t rcv_thread;
+    void *thread_return;
+    if(argc != 4){
+        printf("Usage: %s <IP> <port> <name>\n", argv[0]);
         exit(1);
     }
     
-    pthread_mutex_init(&mutx, NULL);
-    server_sock = socket(PF_INET, SOCK_STREAM, 0);
+    sprintf(name, "[%s]", argv[3]);
+    sock = socket(PF_INET, SOCK_STREAM, 0);
     
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(atoi(argv[1]));
-    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_addr.sin_port = htons(atoi(argv[2]));
+    server_addr.sin_addr.s_addr = inet_addr(argv[1]);
     
-    if(-1 == bind(server_sock, (struct sockaddr*) &server_addr, sizeof(server_addr))){
-        printf("bind() 실행 에러\n");
+    if(-1 == connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr))){
+        printf("connect() 실행 에러\n");
         exit(1);
     }
     
-    if(-1 == listen(server_sock, 5)){
-        printf("listen() 실행 실패");
-        exit(1);
-    }
-    
-    while(1){
-        client_addr_size = sizeof(client_addr);
-        client_sock = accept(server_sock, (struct sockaddr*)&client_addr, &client_addr_size);
-        
-        pthread_mutex_lock(&mutx);
-        client_socks[client_cnt++] = client_sock;
-        pthread_mutex_unlock(&mutx);
-        
-        pthread_create(&t_id, NULL, handle_client, (void*)&client_sock);
-        pthread_detach(t_id);
-        printf("Connected client IP: %s \n", inet_ntoa(client_addr.sin_addr));
-    }
-    close(server_sock);
+    pthread_create(&snd_thread, NULL, send_msg, (void*)&sock);
+    pthread_create(&rcv_thread, NULL, recv_msg, (void*)&sock);
+    pthread_join(snd_thread, &thread_return);
+    pthread_join(rcv_thread, &thread_return);
+
+    close(sock);
     return 0;
 }
 
 
-
-void *handle_client(void *arg){
-    int client_sock = *((int*)arg);
-    int str_len = 0;
-    int i = 0;
-    char msg[BUFF_SIZE];
-    
-    while((str_len = read(client_sock, msg, sizeof(msg))) != 0)
-        send_msg(msg, str_len);
-    
-    pthread_mutex_lock(&mutx);
-    for(i = 0; i < client_cnt; i++){
-        if(client_sock == client_socks[i]){
-            while(i++ < client_cnt-1)
-                client_socks[i] = client_socks[i+1];
-            break;
+void *send_msg(void *arg){
+    int sock = *((int*)arg);
+    char name_msg[NAME_SIZE + BUFF_SIZE];
+    while(1){
+        fgets(msg, BUFF_SIZE, stdin);
+        if(!strcmp(msg, "q\n")||!strcmp(msg, "Q\n")){
+            close(sock);
+            exit(0);
         }
+        sprintf(name_msg, "%s %s", name, msg);
+        write(sock, name_msg, strlen(name_msg));
     }
-    client_cnt--;
-    pthread_mutex_unlock(&mutx);
-    close(client_sock);
     return NULL;
 }
 
-void send_msg(char *msg, int len){
-    int i;
-    pthread_mutex_lock(&mutx);
-    for(i = 0; i < client_cnt; i++)
-        write(client_socks[i], msg, len);
-    pthread_mutex_unlock(&mutx);
+void *recv_msg(void *arg){
+    int sock = *((int*)arg);
+    char name_msg[NAME_SIZE + BUFF_SIZE];
+    unsigned long str_len;
+    while(1){
+        str_len = read(sock, name_msg, NAME_SIZE+BUFF_SIZE-1);
+        if(str_len == -1)
+            return (void*) -1;
+        name_msg[str_len] = 0;
+        fputs(name_msg, stdout);
+    }
+    return NULL;
 }
+
